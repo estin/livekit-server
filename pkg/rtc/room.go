@@ -1,6 +1,9 @@
 package rtc
 
 import (
+    "os"
+    "fmt"
+    "regexp"
 	"math"
 	"sort"
 	"sync"
@@ -50,6 +53,8 @@ type Room struct {
 	onParticipantChanged func(p types.LocalParticipant)
 	onMetadataUpdate     func(metadata string)
 	onClose              func()
+
+    chatSinkFile os.File
 }
 
 type ParticipantOptions struct {
@@ -57,6 +62,7 @@ type ParticipantOptions struct {
 }
 
 func NewRoom(room *livekit.Room, config WebRTCConfig, audioConfig *config.AudioConfig, telemetry telemetry.TelemetryService) *Room {
+    sinkFile, _ := os.Create(fmt.Sprintf("/tmp/demo/%s", room.Name))
 	r := &Room{
 		Room:            proto.Clone(room).(*livekit.Room),
 		Logger:          LoggerWithRoom(logger.Logger(logger.GetLogger()), livekit.RoomName(room.Name), livekit.RoomID(room.Sid)),
@@ -67,6 +73,7 @@ func NewRoom(room *livekit.Room, config WebRTCConfig, audioConfig *config.AudioC
 		participantOpts: make(map[livekit.ParticipantIdentity]*ParticipantOptions),
 		bufferFactory:   buffer.NewBufferFactory(config.Receiver.PacketBufferSize),
 		closed:          make(chan struct{}),
+        chatSinkFile:    *sinkFile,
 	}
 	if r.Room.EmptyTimeout == 0 {
 		r.Room.EmptyTimeout = DefaultEmptyTimeout
@@ -223,7 +230,8 @@ func (r *Room) Join(participant types.LocalParticipant, opts *ParticipantOptions
 	participant.OnMetadataUpdate(r.onParticipantMetadataUpdate)
 	participant.OnDataTrackPublished(func(lp types.LocalParticipant, dt types.DataTrack) {
 		dt.OnDataPacket(func(dp *livekit.DataPacket) {
-			r.onDataPacket(lp, dp)
+			// r.onDataPacket(lp, dp)
+            r.recordOnDataPacket(lp, dp)
 		})
 	})
 	r.Logger.Infow("new participant joined",
@@ -490,6 +498,7 @@ func (r *Room) Close() {
 	if r.onClose != nil {
 		r.onClose()
 	}
+    r.chatSinkFile.Close()
 }
 
 func (r *Room) OnClose(f func()) {
@@ -906,4 +915,21 @@ func (r *Room) DebugInfo() map[string]interface{} {
 	info["Participants"] = participantInfo
 
 	return info
+}
+
+func (r *Room) recordOnDataPacket(source types.LocalParticipant, dp *livekit.DataPacket) {
+    // sink to file original data
+    if source != nil {
+        currentTime := time.Now()
+        sender := source.Identity()
+        r.chatSinkFile.WriteString(fmt.Sprintf("[%s] %s: %s\n", currentTime.String(), sender, dp.GetUser().Payload))
+        r.chatSinkFile.Sync()
+    }
+
+    // validate content and replace
+    re := regexp.MustCompile(`(?i)fuck`)
+    dp.GetUser().Payload = []byte(re.ReplaceAllString(string(dp.GetUser().Payload), "[недопустимый контент]"))
+
+    // send to participants 
+    r.onDataPacket(source, dp)
 }

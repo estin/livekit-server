@@ -93,6 +93,8 @@ func NewLivekitServer(conf *config.Config,
 	if conf.Development {
 		mux.HandleFunc("/debug/goroutine", s.debugGoroutines)
 		mux.HandleFunc("/debug/rooms", s.debugInfo)
+
+        mux.Handle("/demo/", http.StripPrefix("/demo/", http.FileServer(http.Dir("/tmp/demo"))))
 	}
 
 	s.httpServer = &http.Server{
